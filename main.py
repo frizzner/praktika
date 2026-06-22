@@ -1,3 +1,5 @@
+# Prystupa Anton ipz23 
+#Variant 22
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
