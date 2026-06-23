@@ -24,8 +24,7 @@
 
 ```bash
 python ProjectTracker.py
-
-
+```
 Файли
 ProjectTracker.py — основний скрипт
 ProjectTracker.json — файл для збереження даних
