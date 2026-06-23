@@ -11,6 +11,8 @@
 from datetime import date, datetime
 from enum import Enum
 from dataclasses import dataclass, field
+from pathlib import Path
+import json
 from typing import Optional
 
 
@@ -52,6 +54,23 @@ class Task:
         }
         return icons[self.status]
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "status": self.status.name,
+            "deadline": self.deadline.isoformat(),
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> "Task":
+        return Task(
+            id=data["id"],
+            title=data["title"],
+            status=TaskStatus[data["status"]],
+            deadline=parse_date(data["deadline"]) or date.today(),
+        )
+
 
 @dataclass
 class Project:
@@ -82,6 +101,33 @@ class Project:
         tid = self._next_task_id
         self._next_task_id += 1
         return tid
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status.name,
+            "deadline": self.deadline.isoformat(),
+            "tasks": [t.to_dict() for t in self.tasks],
+            "_next_task_id": self._next_task_id,
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> "Project":
+        p = Project(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            status=ProjectStatus[data["status"]],
+            deadline=parse_date(data["deadline"]) or date.today(),
+        )
+        p.tasks = [Task.from_dict(td) for td in data.get("tasks", [])]
+        p._next_task_id = data.get(
+            "_next_task_id",
+            max((t.id for t in p.tasks), default=0) + 1,
+        )
+        return p
 
 
 # ─────────────────────────────────────────
@@ -153,12 +199,20 @@ def input_choice(prompt: str, options: dict):
         label = v.value if hasattr(v, "value") else v
         print(f"    {k}. {label}")
     keys = list(options.keys())
-    choice = input_int(f"Вибір ({keys[0]}–{keys[-1]}): ", min_val=keys[0], max_val=keys[-1])
-    return options[choice]
+    while True:
+        choice = input_int(f"Вибір ({keys[0]}–{keys[-1]}): ", min_val=keys[0], max_val=keys[-1])
+        if choice in options:
+            return options[choice]
+        print("  Невірний вибір. Спробуйте ще раз.")
 
 def confirm(prompt: str) -> bool:
-    ans = input(f"  {prompt} (д/н): ").strip().lower()
-    return ans in ("д", "y", "yes", "так", "1")
+    while True:
+        ans = input(f"  {prompt} (y/n): ").strip().lower()
+        if ans in ("д", "y", "yes", "так", "1"):
+            return True
+        if ans in ("н", "n", "no", "ні", "0"):
+            return False
+        print("  Будь ласка, введіть 'y' або 'n'.")
 
 
 # ─────────────────────────────────────────
@@ -166,10 +220,40 @@ def confirm(prompt: str) -> bool:
 # ─────────────────────────────────────────
 
 class ProjectTracker:
+    DATA_FILE = Path(__file__).with_suffix(".json")
 
     def __init__(self):
         self.projects: list[Project] = []
         self._next_project_id = 1
+        self.load_data()
+
+    def save_data(self) -> None:
+        data = {
+            "next_project_id": self._next_project_id,
+            "projects": [p.to_dict() for p in self.projects],
+        }
+        try:
+            with open(self.DATA_FILE, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+        except OSError as err:
+            print(f"  Не вдалося зберегти дані: {err}")
+
+    def load_data(self) -> None:
+        if not self.DATA_FILE.exists():
+            return
+        try:
+            with open(self.DATA_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self._next_project_id = data.get("next_project_id", 1)
+            self.projects = [Project.from_dict(pd) for pd in data.get("projects", [])]
+            if self.projects:
+                highest = max(p.id for p in self.projects)
+                self._next_project_id = max(self._next_project_id, highest + 1)
+            else:
+                self._next_project_id = 1
+        except (OSError, json.JSONDecodeError, KeyError) as err:
+            print(f"  Помилка при завантаженні даних: {err}")
+            print("  Дані ігноруються, можна продовжити роботу з порожньою базою.")
 
     # ── пошук ────────────────────────────
 
@@ -265,6 +349,7 @@ class ProjectTracker:
         )
         self._next_project_id += 1
         self.projects.append(p)
+        self.save_data()
         print(f"  ✓ Проєкт #{p.id} «{p.name}» створено.")
 
     def edit_project(self):
@@ -290,6 +375,7 @@ class ProjectTracker:
         if confirm("Змінити дедлайн?"):
             p.deadline = input_date("Новий дедлайн")
 
+        self.save_data()
         print("  ✓ Проєкт оновлено.")
 
     def delete_project(self):
@@ -297,7 +383,20 @@ class ProjectTracker:
         if not p: return
         if confirm(f"Видалити проєкт «{p.name}» та всі його задачі?"):
             self.projects.remove(p)
+            if not self.projects:
+                self._next_project_id = 1
+            self.save_data()
             print("  ✓ Проєкт видалено.")
+
+    def delete_all_projects(self):
+        if not self.projects:
+            print("  Проєктів немає.")
+            return
+        if confirm("Видалити всі проєкти та їх задачі?"):
+            self.projects.clear()
+            self._next_project_id = 1
+            self.save_data()
+            print("  ✓ Усі проєкти видалено.")
 
     # ══════════════════════════════════════
     #  ЗАДАЧІ
@@ -320,6 +419,7 @@ class ProjectTracker:
 
         t = Task(id=p.next_task_id(), title=title, status=status, deadline=deadline)
         p.tasks.append(t)
+        self.save_data()
         print(f"  ✓ Задачу #{t.id} «{t.title}» додано.")
 
     def edit_task(self):
@@ -341,6 +441,7 @@ class ProjectTracker:
         if confirm("Змінити дедлайн?"):
             t.deadline = input_date("Новий дедлайн")
 
+        self.save_data()
         print("  ✓ Задачу оновлено.")
 
     def delete_task(self):
@@ -351,6 +452,7 @@ class ProjectTracker:
 
         if confirm(f"Видалити задачу «{t.title}»?"):
             p.tasks.remove(t)
+            self.save_data()
             print("  ✓ Задачу видалено.")
 
     # ══════════════════════════════════════
@@ -448,6 +550,7 @@ class ProjectTracker:
         ]
 
         self.projects.extend([p1, p2, p3])
+        self.save_data()
         print("  ✓ Завантажено 3 демо-проєкти.")
 
     # ══════════════════════════════════════
@@ -475,7 +578,8 @@ class ProjectTracker:
             "9":  ("Прострочені елементи",      self.show_overdue),
             "10": ("Зведення",                  self.show_summary),
             "── Інше ─────────────────────────────": None,
-            "11": ("Завантажити демо-дані",     self.load_demo),
+            "11": ("Видалити всі проєкти",      self.delete_all_projects),
+            "12": ("Завантажити демо-дані",     self.load_demo),
             "0":  ("Вийти",                     None),
         }
 
@@ -496,6 +600,7 @@ class ProjectTracker:
 
             if choice == "0":
                 print("  До побачення!")
+                self.save_data()
                 break
             elif choice in MENU and isinstance(MENU[choice], tuple):
                 MENU[choice][1]()
