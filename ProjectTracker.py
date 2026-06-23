@@ -559,9 +559,12 @@ class ProjectTracker:
 
     def run(self):
         print()
-        hr("╔", 62)  # просто декор
-        print("║        ТРЕКЕР ПРОЄКТІВ  (Python)                        ║")
-        hr("╚", 62)
+        width = 62
+        inner = width - 2
+        title = "ТРЕКЕР ПРОЄКТІВ  (Python)"
+        print("╔" + "═" * inner + "╗")
+        print("║" + title.center(inner) + "║")
+        print("╚" + "═" * inner + "╝")
 
         MENU = {
             "── Проєкти ──────────────────────────": None,
